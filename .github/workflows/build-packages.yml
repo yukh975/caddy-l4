@@ -312,14 +312,16 @@ jobs:
             # pkg create: rootdir is the fake system root; plist paths are
             # relative to rootdir (i.e. include usr/local/... prefix).
             # Do NOT pass -p plist — let pkg auto-discover all files from rootdir.
-            mkdir -p /tmp/pkgs
-            pkg create -m "${METADIR}" -r "${STAGE}" -o /tmp/pkgs
-            ls -lh /tmp/pkgs/
+            # Build the package into a workspace subdirectory so rsync
+            # copies it back to the ubuntu runner before the VM shuts down.
+            mkdir -p "${WS}/pkgs"
+            pkg create -m "${METADIR}" -r "${STAGE}" -o "${WS}/pkgs"
+            ls -lh "${WS}/pkgs/"
 
       - uses: actions/upload-artifact@v4
         with:
           name: pkg-freebsd-${{ matrix.fbsd_major }}
-          path: /tmp/pkgs/*.pkg
+          path: ${{ github.workspace }}/pkgs/*.pkg
 
   # ── Create GitHub Release ────────────────────────────────────────────────
   release:
