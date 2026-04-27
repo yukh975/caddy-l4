@@ -48,11 +48,9 @@ jobs:
           VER="${RAW#v}"
           RPM_VER=$(echo "$VER" | sed 's/-/~/g; s/+/~/g')
           DEB_VER=$(echo "$VER" | sed 's/+/~/g')
-          if [[ "$GITHUB_REF" == refs/tags/* ]] || [ -n "${{ github.event.inputs.tag }}" ]; then
-            PLUGIN_REF="github.com/mholt/caddy-l4@${RAW}"
-          else
-            PLUGIN_REF="github.com/mholt/caddy-l4=${GITHUB_WORKSPACE}"
-          fi
+          # Always build from the local checkout so tag names on the fork
+          # do not need to exist on the upstream module proxy.
+          PLUGIN_REF="github.com/mholt/caddy-l4=${GITHUB_WORKSPACE}"
           DATE=$(date -u '+%a %b %d %Y')
           echo "version=${VER}"           >> "$GITHUB_OUTPUT"
           echo "rpm_version=${RPM_VER}"   >> "$GITHUB_OUTPUT"
