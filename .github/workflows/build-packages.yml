@@ -309,9 +309,9 @@ jobs:
             sed -e "s/@@VERSION@@/${VERSION}/g" \
                 -e "s/@@FBSD_MAJOR@@/${FBSD_MAJOR}/g" \
                 "${WS}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
-            # Generate explicit plist — paths relative to rootdir (STAGE).
-            # pkg create without -p creates an empty package on some FreeBSD versions.
-            (cd "${STAGE}" && find . -type f | sed 's|^\./||' | sort) > "${METADIR}/plist"
+            # plist paths must be relative to the prefix (/usr/local), not rootdir.
+            # pkg resolves files as rootdir + prefix + plist_path.
+            (cd "${STAGE}" && find . -type f | sed 's|^\./usr/local/||' | sort) > "${METADIR}/plist"
             cat "${METADIR}/plist"
             mkdir -p "${WS}/pkgs"
             pkg create -m "${METADIR}" -r "${STAGE}" -p "${METADIR}/plist" -o "${WS}/pkgs"
