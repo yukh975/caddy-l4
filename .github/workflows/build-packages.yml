@@ -143,9 +143,9 @@ jobs:
       matrix:
         include:
           - branch: p11
-            release: alt1
+            release: alt1.p11
           - branch: sisyphus
-            release: alt1
+            release: alt1.sisyphus
 
     container:
       image: fedora:latest
@@ -309,13 +309,12 @@ jobs:
             sed -e "s/@@VERSION@@/${VERSION}/g" \
                 -e "s/@@FBSD_MAJOR@@/${FBSD_MAJOR}/g" \
                 "${WS}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
-            # pkg create: rootdir is the fake system root; plist paths are
-            # relative to rootdir (i.e. include usr/local/... prefix).
-            # Do NOT pass -p plist — let pkg auto-discover all files from rootdir.
-            # Build the package into a workspace subdirectory so rsync
-            # copies it back to the ubuntu runner before the VM shuts down.
+            # Generate explicit plist — paths relative to rootdir (STAGE).
+            # pkg create without -p creates an empty package on some FreeBSD versions.
+            (cd "${STAGE}" && find . -type f | sed 's|^\./||' | sort) > "${METADIR}/plist"
+            cat "${METADIR}/plist"
             mkdir -p "${WS}/pkgs"
-            pkg create -m "${METADIR}" -r "${STAGE}" -o "${WS}/pkgs"
+            pkg create -m "${METADIR}" -r "${STAGE}" -p "${METADIR}/plist" -o "${WS}/pkgs"
             ls -lh "${WS}/pkgs/"
 
       - uses: actions/upload-artifact@v4
