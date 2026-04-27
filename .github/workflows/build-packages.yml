@@ -315,6 +315,11 @@ jobs:
             cat "${METADIR}/plist"
             mkdir -p "${WS}/pkgs"
             pkg create -m "${METADIR}" -r "${STAGE}" -p "${METADIR}/plist" -o "${WS}/pkgs"
+            # Rename to include FreeBSD major version so FreeBSD 14 and 15 packages
+            # have distinct filenames when both land in the same GitHub Release.
+            for f in "${WS}/pkgs/"*.pkg; do
+              mv "$f" "${WS}/pkgs/$(basename "$f" .pkg)-freebsd${FBSD_MAJOR}.pkg"
+            done
             ls -lh "${WS}/pkgs/"
 
       - uses: actions/upload-artifact@v4
