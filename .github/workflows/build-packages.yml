@@ -139,10 +139,10 @@ jobs:
       matrix:
         include:
           - branch: p11
-            image: registry.altlinux.org/alt:p11
+            image: ghcr.io/alt-linux/alt:p11
             release: alt1
           - branch: sisyphus
-            image: registry.altlinux.org/alt:sisyphus
+            image: ghcr.io/alt-linux/alt:sisyphus
             release: alt1
 
     container:
@@ -280,17 +280,16 @@ jobs:
 
       - name: Package inside FreeBSD ${{ matrix.fbsd_release }}
         uses: vmactions/freebsd-vm@v1
-        env:
-          VERSION:    ${{ needs.version.outputs.version }}
-          FBSD_MAJOR: ${{ matrix.fbsd_major }}
-          WORKSPACE:  ${{ github.workspace }}
         with:
           release: ${{ matrix.fbsd_release }}
           usesh: true
           sync: rsync
           run: |
             set -e
-            BINARY="${WORKSPACE}/artifacts/caddy-freebsd-amd64"
+            WS="${{ github.workspace }}"
+            VERSION="${{ needs.version.outputs.version }}"
+            FBSD_MAJOR="${{ matrix.fbsd_major }}"
+            BINARY="${WS}/artifacts/caddy-freebsd-amd64"
             chmod 0755 "${BINARY}"
             file "${BINARY}"
             STAGE="/tmp/pkg-stage"
@@ -298,16 +297,16 @@ jobs:
             install -d "${STAGE}/usr/local/etc/caddy"
             install -d "${STAGE}/usr/local/etc/rc.d"
             install -d "${STAGE}/usr/local/share/doc/caddy-l4"
-            install -m 0755 "${BINARY}" "${STAGE}/usr/local/bin/caddy"
-            install -m 0755 "${WORKSPACE}/packaging/freebsd/rc.d/caddy_l4" "${STAGE}/usr/local/etc/rc.d/caddy_l4"
-            install -m 0644 "${WORKSPACE}/Caddyfile.example" "${STAGE}/usr/local/etc/caddy/Caddyfile.example"
-            install -m 0644 "${WORKSPACE}/LICENSE"           "${STAGE}/usr/local/share/doc/caddy-l4/LICENSE"
-            install -m 0644 "${WORKSPACE}/README.md"         "${STAGE}/usr/local/share/doc/caddy-l4/README.md"
+            install -m 0755 "${BINARY}"                                     "${STAGE}/usr/local/bin/caddy"
+            install -m 0755 "${WS}/packaging/freebsd/rc.d/caddy_l4"        "${STAGE}/usr/local/etc/rc.d/caddy_l4"
+            install -m 0644 "${WS}/Caddyfile.example"                       "${STAGE}/usr/local/etc/caddy/Caddyfile.example"
+            install -m 0644 "${WS}/LICENSE"                                 "${STAGE}/usr/local/share/doc/caddy-l4/LICENSE"
+            install -m 0644 "${WS}/README.md"                               "${STAGE}/usr/local/share/doc/caddy-l4/README.md"
             METADIR="/tmp/pkg-meta"
             mkdir -p "${METADIR}"
             sed -e "s/@@VERSION@@/${VERSION}/g" \
                 -e "s/@@FBSD_MAJOR@@/${FBSD_MAJOR}/g" \
-                "${WORKSPACE}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
+                "${WS}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
             (cd "${STAGE}/usr/local" && find . -type f | sed 's|^\./||' | sort) > "${METADIR}/plist"
             mkdir -p /tmp/pkgs
             pkg create -m "${METADIR}" -r "${STAGE}/usr/local" -p "${METADIR}/plist" -o /tmp/pkgs
