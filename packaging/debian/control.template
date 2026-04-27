@@ -1,0 +1,13 @@
+Package: caddy-l4
+Version: @@VERSION@@-1~@@CODENAME@@1
+Architecture: amd64
+Maintainer: yukh975 <yukh975@gmail.com>
+Depends: systemd
+Conflicts: caddy
+Section: net
+Priority: optional
+Homepage: https://github.com/mholt/caddy-l4
+Description: Layer 4 (TCP/UDP) routing app for Caddy
+ caddy-l4 provides Layer 4 routing for the Caddy web server:
+ TLS passthrough with SNI-based routing, protocol detection,
+ PROXY protocol support, UDP proxying, and load balancing.

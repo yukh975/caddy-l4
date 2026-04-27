@@ -45,19 +45,15 @@ jobs:
             HASH=$(git rev-parse --short HEAD)
             RAW="${LATEST}.post${COMMITS}+g${HASH}"
           fi
-
           VER="${RAW#v}"
           RPM_VER=$(echo "$VER" | sed 's/-/~/g; s/+/~/g')
           DEB_VER=$(echo "$VER" | sed 's/+/~/g')
-
           if [[ "$GITHUB_REF" == refs/tags/* ]] || [ -n "${{ github.event.inputs.tag }}" ]; then
             PLUGIN_REF="github.com/mholt/caddy-l4@${RAW}"
           else
             PLUGIN_REF="github.com/mholt/caddy-l4=${GITHUB_WORKSPACE}"
           fi
-
           DATE=$(date -u '+%a %b %d %Y')
-
           echo "version=${VER}"           >> "$GITHUB_OUTPUT"
           echo "rpm_version=${RPM_VER}"   >> "$GITHUB_OUTPUT"
           echo "deb_version=${DEB_VER}"   >> "$GITHUB_OUTPUT"
@@ -142,7 +138,6 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Fixed: correct Docker image tag format for registry.altlinux.org
           - branch: p11
             image: registry.altlinux.org/alt:p11
             release: alt1
@@ -163,9 +158,7 @@ jobs:
           path: /tmp/bin
 
       - name: Install build tools
-        run: |
-          apt-get update -qq
-          apt-get install -y rpm-build rpm-build-systemd shadow-utils
+        run: apt-get update -qq && apt-get install -y rpm-build rpm-build-systemd shadow-utils
 
       - name: Build RPM
         env:
@@ -175,22 +168,17 @@ jobs:
         run: |
           set -e
           chmod 0755 /tmp/bin/caddy-linux-amd64
-
           mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
-
           cp /tmp/bin/caddy-linux-amd64           ~/rpmbuild/SOURCES/caddy
           cp packaging/systemd/caddy-l4.service   ~/rpmbuild/SOURCES/caddy-l4.service
           cp Caddyfile.example                     ~/rpmbuild/SOURCES/Caddyfile.example
           cp LICENSE                               ~/rpmbuild/SOURCES/LICENSE
           cp README.md                             ~/rpmbuild/SOURCES/README.md
-
-          sed \
-            -e "s/%%VERSION%%/${VERSION}/g" \
-            -e "s/%%RELEASE%%/${RELEASE}/g" \
-            -e "s/%%DATE%%/${DATE}/g" \
-            packaging/altlinux/caddy-l4.spec \
-            > ~/rpmbuild/SPECS/caddy-l4.spec
-
+          sed -e "s/%%VERSION%%/${VERSION}/g" \
+              -e "s/%%RELEASE%%/${RELEASE}/g" \
+              -e "s/%%DATE%%/${DATE}/g" \
+              packaging/altlinux/caddy-l4.spec \
+              > ~/rpmbuild/SPECS/caddy-l4.spec
           rpmbuild -bb ~/rpmbuild/SPECS/caddy-l4.spec
 
       - name: Collect RPMs
@@ -214,9 +202,7 @@ jobs:
       matrix:
         include:
           - codename: bookworm
-            release: '12'
           - codename: trixie
-            release: '13'
 
     container:
       image: debian:${{ matrix.codename }}
@@ -231,10 +217,7 @@ jobs:
           path: /tmp/bin
 
       - name: Install build tools
-        run: |
-          apt-get update -qq
-          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-            fakeroot dpkg-dev
+        run: apt-get update -qq && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends fakeroot dpkg-dev
 
       - name: Build DEB
         env:
@@ -243,10 +226,8 @@ jobs:
         run: |
           set -e
           chmod 0755 /tmp/bin/caddy-linux-amd64
-
           PKG="caddy-l4_${VERSION}-1~${CODENAME}1_amd64"
           STAGE="/tmp/deb/${PKG}"
-
           install -d "${STAGE}/DEBIAN"
           install -d "${STAGE}/usr/bin"
           install -d "${STAGE}/lib/systemd/system"
@@ -254,60 +235,18 @@ jobs:
           install -d "${STAGE}/var/lib/caddy"
           install -d "${STAGE}/var/log/caddy"
           install -d "${STAGE}/usr/share/doc/caddy-l4"
-          mkdir -p /tmp/debs   # output directory for dpkg-deb
-
-          install -m 0755 /tmp/bin/caddy-linux-amd64 \
-              "${STAGE}/usr/bin/caddy"
-          install -m 0644 packaging/systemd/caddy-l4.service \
-              "${STAGE}/lib/systemd/system/caddy-l4.service"
-          install -m 0644 Caddyfile.example \
-              "${STAGE}/etc/caddy/Caddyfile.example"
-          install -m 0644 LICENSE  "${STAGE}/usr/share/doc/caddy-l4/copyright"
-          install -m 0644 README.md "${STAGE}/usr/share/doc/caddy-l4/README.md"
-
-          cat > "${STAGE}/DEBIAN/control" <<CTRL
-Package: caddy-l4
-Version: ${VERSION}-1~${CODENAME}1
-Architecture: amd64
-Maintainer: yukh975 <yukh975@gmail.com>
-Depends: systemd
-Conflicts: caddy
-Section: net
-Priority: optional
-Homepage: https://github.com/mholt/caddy-l4
-Description: Layer 4 (TCP/UDP) routing app for Caddy
- caddy-l4 provides Layer 4 routing for the Caddy web server:
- TLS passthrough with SNI-based routing, protocol detection,
- PROXY protocol support, UDP proxying, and load balancing.
-CTRL
-
+          mkdir -p /tmp/debs
+          install -m 0755 /tmp/bin/caddy-linux-amd64             "${STAGE}/usr/bin/caddy"
+          install -m 0644 packaging/systemd/caddy-l4.service     "${STAGE}/lib/systemd/system/caddy-l4.service"
+          install -m 0644 Caddyfile.example                      "${STAGE}/etc/caddy/Caddyfile.example"
+          install -m 0644 LICENSE                                "${STAGE}/usr/share/doc/caddy-l4/copyright"
+          install -m 0644 README.md                              "${STAGE}/usr/share/doc/caddy-l4/README.md"
+          sed -e "s/@@VERSION@@/${VERSION}/g" \
+              -e "s/@@CODENAME@@/${CODENAME}/g" \
+              packaging/debian/control.template > "${STAGE}/DEBIAN/control"
           echo "/etc/caddy/Caddyfile.example" > "${STAGE}/DEBIAN/conffiles"
-
-          cat > "${STAGE}/DEBIAN/postinst" <<'POSTINST'
-#!/bin/sh
-set -e
-if ! getent group caddy >/dev/null; then groupadd -r caddy; fi
-if ! getent passwd caddy >/dev/null; then
-    useradd -r -g caddy -d /var/lib/caddy -s /usr/sbin/nologin \
-        -c "Caddy L4 service account" caddy
-fi
-chown -R caddy:caddy /var/lib/caddy /var/log/caddy
-if [ "$1" = "configure" ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl daemon-reload
-    systemctl enable caddy-l4.service || true
-fi
-POSTINST
-          chmod 0755 "${STAGE}/DEBIAN/postinst"
-
-          cat > "${STAGE}/DEBIAN/prerm" <<'PRERM'
-#!/bin/sh
-set -e
-if [ "$1" = "remove" ] && command -v systemctl >/dev/null 2>&1; then
-    systemctl disable --now caddy-l4.service || true
-fi
-PRERM
-          chmod 0755 "${STAGE}/DEBIAN/prerm"
-
+          install -m 0755 packaging/debian/postinst "${STAGE}/DEBIAN/postinst"
+          install -m 0755 packaging/debian/prerm    "${STAGE}/DEBIAN/prerm"
           fakeroot dpkg-deb --build "${STAGE}" "/tmp/debs/${PKG}.deb"
           ls -lh /tmp/debs/
 
@@ -317,10 +256,6 @@ PRERM
           path: /tmp/debs/*.deb
 
   # ── Package: FreeBSD ─────────────────────────────────────────────────────
-  #
-  # The binary is cross-compiled on Linux (build-freebsd job above).
-  # The FreeBSD VM is only used for packaging — much faster.
-  #
   package-freebsd:
     name: PKG (FreeBSD ${{ matrix.fbsd_release }})
     runs-on: ubuntu-latest
@@ -355,57 +290,27 @@ PRERM
           sync: rsync
           run: |
             set -e
-
             BINARY="${WORKSPACE}/artifacts/caddy-freebsd-amd64"
             chmod 0755 "${BINARY}"
-
-            # Smoke-test the cross-compiled binary
             file "${BINARY}"
-
-            # ── Stage package tree ──────────────────────────────────────
             STAGE="/tmp/pkg-stage"
             install -d "${STAGE}/usr/local/bin"
             install -d "${STAGE}/usr/local/etc/caddy"
             install -d "${STAGE}/usr/local/etc/rc.d"
             install -d "${STAGE}/usr/local/share/doc/caddy-l4"
-
-            install -m 0755 "${BINARY}" \
-                "${STAGE}/usr/local/bin/caddy"
-            install -m 0755 "${WORKSPACE}/packaging/freebsd/rc.d/caddy_l4" \
-                "${STAGE}/usr/local/etc/rc.d/caddy_l4"
-            install -m 0644 "${WORKSPACE}/Caddyfile.example" \
-                "${STAGE}/usr/local/etc/caddy/Caddyfile.example"
-            install -m 0644 "${WORKSPACE}/LICENSE" \
-                "${STAGE}/usr/local/share/doc/caddy-l4/LICENSE"
-            install -m 0644 "${WORKSPACE}/README.md" \
-                "${STAGE}/usr/local/share/doc/caddy-l4/README.md"
-
-            # ── pkg manifest ────────────────────────────────────────────
+            install -m 0755 "${BINARY}" "${STAGE}/usr/local/bin/caddy"
+            install -m 0755 "${WORKSPACE}/packaging/freebsd/rc.d/caddy_l4" "${STAGE}/usr/local/etc/rc.d/caddy_l4"
+            install -m 0644 "${WORKSPACE}/Caddyfile.example" "${STAGE}/usr/local/etc/caddy/Caddyfile.example"
+            install -m 0644 "${WORKSPACE}/LICENSE"           "${STAGE}/usr/local/share/doc/caddy-l4/LICENSE"
+            install -m 0644 "${WORKSPACE}/README.md"         "${STAGE}/usr/local/share/doc/caddy-l4/README.md"
             METADIR="/tmp/pkg-meta"
             mkdir -p "${METADIR}"
-
-            cat > "${METADIR}/+MANIFEST" <<EOF
-name: caddy-l4
-version: "${VERSION}"
-origin: net/caddy-l4
-comment: "Layer 4 (TCP/UDP) routing app for Caddy"
-desc: "caddy-l4 enables Layer 4 routing for Caddy: TLS passthrough with SNI-based routing, protocol detection, PROXY protocol, UDP proxying, and load balancing."
-maintainer: "yukh975@gmail.com"
-www: "https://github.com/mholt/caddy-l4"
-arch: "freebsd:${FBSD_MAJOR}:amd64"
-prefix: /usr/local
-licenselogic: single
-licenses: [Apache2]
-categories: [net]
-EOF
-
-            # plist: list of files relative to prefix (/usr/local)
-            (cd "${STAGE}/usr/local" && find . -type f | sed 's|^\./||' | sort) \
-                > "${METADIR}/plist"
-
+            sed -e "s/@@VERSION@@/${VERSION}/g" \
+                -e "s/@@FBSD_MAJOR@@/${FBSD_MAJOR}/g" \
+                "${WORKSPACE}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
+            (cd "${STAGE}/usr/local" && find . -type f | sed 's|^\./||' | sort) > "${METADIR}/plist"
             mkdir -p /tmp/pkgs
-            pkg create -m "${METADIR}" -r "${STAGE}/usr/local" \
-                -p "${METADIR}/plist" -o /tmp/pkgs
+            pkg create -m "${METADIR}" -r "${STAGE}/usr/local" -p "${METADIR}/plist" -o /tmp/pkgs
             ls -lh /tmp/pkgs/
 
       - uses: actions/upload-artifact@v4
@@ -423,10 +328,8 @@ EOF
       - package-altlinux
       - package-debian
       - package-freebsd
-
     permissions:
       contents: write
-
     steps:
       - name: Download all artifacts
         uses: actions/download-artifact@v4

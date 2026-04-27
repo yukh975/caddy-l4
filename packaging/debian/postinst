@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+if ! getent group caddy >/dev/null; then groupadd -r caddy; fi
+if ! getent passwd caddy >/dev/null; then
+    useradd -r -g caddy -d /var/lib/caddy -s /usr/sbin/nologin \
+        -c "Caddy L4 service account" caddy
+fi
+chown -R caddy:caddy /var/lib/caddy /var/log/caddy
+if [ "$1" = "configure" ] && command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload
+    systemctl enable caddy-l4.service || true
+fi

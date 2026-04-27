@@ -1,0 +1,12 @@
+name: caddy-l4
+version: "@@VERSION@@"
+origin: net/caddy-l4
+comment: "Layer 4 (TCP/UDP) routing app for Caddy"
+desc: "caddy-l4 enables Layer 4 routing for Caddy: TLS passthrough with SNI-based routing, protocol detection, PROXY protocol, UDP proxying, and load balancing."
+maintainer: "yukh975@gmail.com"
+www: "https://github.com/mholt/caddy-l4"
+arch: "freebsd:@@FBSD_MAJOR@@:amd64"
+prefix: /usr/local
+licenselogic: single
+licenses: [Apache2]
+categories: [net]
