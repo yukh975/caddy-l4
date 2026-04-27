@@ -1,0 +1,138 @@
+# Caddy L4 — Layer 4 (TCP/UDP) Routing Example
+#
+# This file demonstrates common caddy-l4 routing patterns.
+# Copy to /etc/caddy/Caddyfile and adjust to your environment.
+#
+# Full module docs: https://github.com/mholt/caddy-l4/tree/master/docs
+
+{
+    # Uncomment to disable the admin API in production
+    # admin off
+
+    log {
+        level INFO
+    }
+}
+
+# ─── Layer 4 routing ─────────────────────────────────────────────────────────
+layer4 {
+
+    # ── 1. HTTPS by SNI — TLS passthrough without decryption ─────────────
+    #
+    # Listen on port 443, peek at the TLS ClientHello to read the SNI
+    # hostname, then forward the raw TCP stream to the matching backend.
+    # The TLS session is terminated by the backend, not by this proxy.
+    #
+    0.0.0.0:443 {
+        @tls tls
+
+        route @tls {
+            # app1.example.com → backend cluster A (round-robin)
+            @app1 sni app1.example.com
+            route @app1 {
+                proxy 10.0.1.10:443 10.0.1.11:443
+            }
+
+            # app2.example.com → single backend
+            @app2 sni app2.example.com
+            route @app2 {
+                proxy 10.0.2.10:443
+            }
+
+            # Wildcard: *.internal.example.com → internal cluster
+            @internal sni *.internal.example.com
+            route @internal {
+                proxy 192.168.10.1:443 192.168.10.2:443
+            }
+
+            # Catch-all: any other TLS connection goes to the default backend
+            proxy 10.0.0.1:443
+        }
+
+        # Non-TLS traffic arriving on port 443 → plain HTTP backend
+        proxy 10.0.0.1:80
+    }
+
+    # ── 2. Port multiplexer: TLS passthrough + plain HTTP ─────────────────
+    #
+    # On port 8443 distinguish between TLS and plain HTTP, routing each
+    # to a different backend.
+    #
+    0.0.0.0:8443 {
+        @tls tls
+        route @tls {
+            @svc1 sni service1.example.com
+            route @svc1 {
+                proxy 10.0.3.10:8443
+            }
+            # All other TLS → generic backend
+            proxy 10.0.3.99:8443
+        }
+
+        # Plain (non-TLS) connections on 8443
+        proxy 10.0.3.50:8080
+    }
+
+    # ── 3. SSH passthrough ────────────────────────────────────────────────
+    0.0.0.0:22 {
+        proxy 192.168.1.10:22
+    }
+
+    # ── 4. Database proxy (MySQL) ─────────────────────────────────────────
+    0.0.0.0:3306 {
+        proxy 10.0.10.1:3306 10.0.10.2:3306
+    }
+
+    # ── 5. PROXY protocol — preserve real client IP ───────────────────────
+    #
+    # Wrap the upstream connection with the PROXY protocol (v2) header so
+    # the backend can see the original client address even through the proxy.
+    #
+    0.0.0.0:5432 {
+        proxy 10.0.20.1:5432 {
+            proxy_protocol v2
+        }
+    }
+
+    # ── 6. PROXY protocol ingress — accept PROXY protocol from upstream ───
+    #
+    # If traffic arrives with a PROXY protocol header (e.g. from a load
+    # balancer), unwrap it before forwarding to the real backend.
+    #
+    0.0.0.0:8080 {
+        proxy_protocol  # read and unwrap incoming PROXY header
+        proxy 10.0.30.1:8080
+    }
+
+    # ── 7. UDP — DNS load balancing ───────────────────────────────────────
+    udp/0.0.0.0:53 {
+        proxy udp/8.8.8.8:53 udp/1.1.1.1:53 udp/9.9.9.9:53
+    }
+
+    # ── 8. QUIC / HTTP3 passthrough (UDP port 443) ────────────────────────
+    udp/0.0.0.0:443 {
+        proxy udp/10.0.0.1:443
+    }
+
+    # ── 9. Multi-protocol on a single port ───────────────────────────────
+    #
+    # Detect the application protocol and route accordingly.
+    # caddy-l4 sniffs the first bytes of the connection without consuming
+    # them, so the backend receives the full original stream.
+    #
+    0.0.0.0:9000 {
+        @http http
+        route @http {
+            proxy 10.0.40.1:80
+        }
+
+        @tls tls
+        route @tls {
+            proxy 10.0.40.1:443
+        }
+
+        # Anything else (raw TCP)
+        proxy 10.0.40.2:9000
+    }
+
+}

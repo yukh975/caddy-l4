@@ -1,0 +1,450 @@
+name: Build Packages
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag / version to build (e.g. v0.1.0). Leave empty to use HEAD.'
+        required: false
+        default: ''
+
+# ─── Shared Go version ───────────────────────────────────────────────────────
+env:
+  GO_VERSION: '1.24'
+  GO_DL_VERSION: '1.24.3'   # used when installing Go manually inside containers
+  XCADDY_VERSION: 'latest'
+
+# ─────────────────────────────────────────────────────────────────────────────
+jobs:
+
+  # ── Compute version string ─────────────────────────────────────────────────
+  version:
+    name: Determine version
+    runs-on: ubuntu-latest
+    outputs:
+      version:     ${{ steps.v.outputs.version }}
+      rpm_version: ${{ steps.v.outputs.rpm_version }}
+      deb_version: ${{ steps.v.outputs.deb_version }}
+      plugin_ref:  ${{ steps.v.outputs.plugin_ref }}
+      date:        ${{ steps.v.outputs.date }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Compute version
+        id: v
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            RAW="${{ github.event.inputs.tag }}"
+          elif [[ "$GITHUB_REF" == refs/tags/* ]]; then
+            RAW="${GITHUB_REF_NAME}"
+          else
+            LATEST=$(git describe --tags --match 'v*' --abbrev=0 2>/dev/null || echo "v0.0.0")
+            COMMITS=$(git rev-list ${LATEST}..HEAD --count)
+            HASH=$(git rev-parse --short HEAD)
+            RAW="${LATEST}.post${COMMITS}+g${HASH}"
+          fi
+
+          # Strip leading 'v'
+          VER="${RAW#v}"
+
+          # RPM doesn't allow '-' in Version; use '~' for pre-release separators
+          RPM_VER=$(echo "$VER" | sed 's/-/~/g; s/+/~/g')
+
+          # Debian version uses ~ for epochs/pre-release
+          DEB_VER=$(echo "$VER" | sed 's/+/~/g')
+
+          # plugin_ref: for tagged builds use the upstream tag; for snapshots use local dir
+          if [[ "$GITHUB_REF" == refs/tags/* ]] || [ -n "${{ github.event.inputs.tag }}" ]; then
+            PLUGIN_REF="github.com/mholt/caddy-l4@${RAW}"
+          else
+            PLUGIN_REF="github.com/mholt/caddy-l4=${GITHUB_WORKSPACE}"
+          fi
+
+          DATE=$(date -u '+%a %b %d %Y')
+
+          echo "version=${VER}"       >> "$GITHUB_OUTPUT"
+          echo "rpm_version=${RPM_VER}" >> "$GITHUB_OUTPUT"
+          echo "deb_version=${DEB_VER}" >> "$GITHUB_OUTPUT"
+          echo "plugin_ref=${PLUGIN_REF}" >> "$GITHUB_OUTPUT"
+          echo "date=${DATE}"         >> "$GITHUB_OUTPUT"
+
+          echo "VER=${VER}  RPM=${RPM_VER}  DEB=${DEB_VER}  REF=${PLUGIN_REF}"
+
+  # ── Build caddy binary for Linux (amd64) ───────────────────────────────────
+  build-linux:
+    name: Build binary (linux/amd64)
+    runs-on: ubuntu-latest
+    needs: version
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - name: Install xcaddy
+        run: go install github.com/caddyserver/xcaddy/cmd/xcaddy@${{ env.XCADDY_VERSION }}
+
+      - name: Build
+        env:
+          GOOS: linux
+          GOARCH: amd64
+          GOTOOLCHAIN: auto
+          CGO_ENABLED: '0'
+        run: |
+          xcaddy build \
+            --with ${{ needs.version.outputs.plugin_ref }} \
+            --output caddy-linux-amd64
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: caddy-linux-amd64
+          retention-days: 1
+
+  # ── Package: ALT Linux ─────────────────────────────────────────────────────
+  package-altlinux:
+    name: RPM (${{ matrix.branch }})
+    runs-on: ubuntu-latest
+    needs: [version, build-linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: p11
+            image: registry.altlinux.org/alt/p11
+            release: alt1
+          - branch: sisyphus
+            image: registry.altlinux.org/alt/sisyphus
+            release: alt1
+
+    container:
+      image: ${{ matrix.image }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: /tmp/bin
+
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          apt-get install -y rpm-build shadow-utils
+
+      - name: Build RPM
+        env:
+          VERSION:  ${{ needs.version.outputs.rpm_version }}
+          RELEASE:  ${{ matrix.release }}
+          DATE:     ${{ needs.version.outputs.date }}
+        run: |
+          set -e
+          chmod 0755 /tmp/bin/caddy-linux-amd64
+
+          mkdir -p ~/rpmbuild/{BUILD,RPMS,SOURCES,SPECS,SRPMS}
+
+          # Sources
+          cp /tmp/bin/caddy-linux-amd64      ~/rpmbuild/SOURCES/caddy
+          cp packaging/systemd/caddy-l4.service ~/rpmbuild/SOURCES/caddy-l4.service
+          cp Caddyfile.example               ~/rpmbuild/SOURCES/Caddyfile.example
+          cp LICENSE                         ~/rpmbuild/SOURCES/LICENSE
+          cp README.md                       ~/rpmbuild/SOURCES/README.md
+
+          # Fill in version placeholders
+          sed \
+            -e "s/%%VERSION%%/${VERSION}/g" \
+            -e "s/%%RELEASE%%/${RELEASE}/g" \
+            -e "s/%%DATE%%/${DATE}/g" \
+            packaging/altlinux/caddy-l4.spec \
+            > ~/rpmbuild/SPECS/caddy-l4.spec
+
+          rpmbuild -bb ~/rpmbuild/SPECS/caddy-l4.spec
+
+      - name: Collect RPMs
+        run: |
+          mkdir -p /tmp/artifacts
+          find ~/rpmbuild/RPMS -name '*.rpm' -exec cp {} /tmp/artifacts/ \;
+          ls -lh /tmp/artifacts/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rpm-altlinux-${{ matrix.branch }}
+          path: /tmp/artifacts/*.rpm
+
+  # ── Package: Debian ────────────────────────────────────────────────────────
+  package-debian:
+    name: DEB (Debian ${{ matrix.codename }})
+    runs-on: ubuntu-latest
+    needs: [version, build-linux]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - codename: bookworm
+            release: '12'
+          - codename: trixie
+            release: '13'
+
+    container:
+      image: debian:${{ matrix.codename }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download binary
+        uses: actions/download-artifact@v4
+        with:
+          name: caddy-linux-amd64
+          path: /tmp/bin
+
+      - name: Install build tools
+        run: |
+          apt-get update -qq
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            dpkg-dev fakeroot lintian
+
+      - name: Build DEB
+        env:
+          VERSION:  ${{ needs.version.outputs.deb_version }}
+          CODENAME: ${{ matrix.codename }}
+        run: |
+          set -e
+          chmod 0755 /tmp/bin/caddy-linux-amd64
+
+          PKG="caddy-l4_${VERSION}-1~${CODENAME}1_amd64"
+          STAGE="/tmp/deb/${PKG}"
+
+          # Directory tree
+          install -d "${STAGE}/DEBIAN"
+          install -d "${STAGE}/usr/bin"
+          install -d "${STAGE}/lib/systemd/system"
+          install -d "${STAGE}/etc/caddy"
+          install -d "${STAGE}/var/lib/caddy"
+          install -d "${STAGE}/var/log/caddy"
+          install -d "${STAGE}/usr/share/doc/caddy-l4"
+
+          # Files
+          install -m 0755 /tmp/bin/caddy-linux-amd64 "${STAGE}/usr/bin/caddy"
+          install -m 0644 packaging/systemd/caddy-l4.service \
+              "${STAGE}/lib/systemd/system/caddy-l4.service"
+          install -m 0644 Caddyfile.example "${STAGE}/etc/caddy/Caddyfile.example"
+          install -m 0644 LICENSE  "${STAGE}/usr/share/doc/caddy-l4/copyright"
+          install -m 0644 README.md "${STAGE}/usr/share/doc/caddy-l4/README.md"
+
+          # DEBIAN/control
+          cat > "${STAGE}/DEBIAN/control" <<EOF
+          Package: caddy-l4
+          Version: ${VERSION}-1~${CODENAME}1
+          Architecture: amd64
+          Maintainer: yukh975 <yukh975@gmail.com>
+          Depends: systemd
+          Conflicts: caddy
+          Section: net
+          Priority: optional
+          Homepage: https://github.com/mholt/caddy-l4
+          Description: Layer 4 (TCP/UDP) routing app for Caddy
+           caddy-l4 provides Layer 4 routing for the Caddy web server with
+           TLS passthrough (SNI-based), protocol detection, PROXY protocol
+           support, UDP proxying, and load balancing.
+          EOF
+
+          # DEBIAN/conffiles
+          echo "/etc/caddy/Caddyfile.example" > "${STAGE}/DEBIAN/conffiles"
+
+          # DEBIAN/postinst — create caddy user and enable service
+          cat > "${STAGE}/DEBIAN/postinst" <<'POSTINST'
+          #!/bin/sh
+          set -e
+          if ! getent group  caddy >/dev/null; then groupadd -r caddy; fi
+          if ! getent passwd caddy >/dev/null; then
+              useradd -r -g caddy -d /var/lib/caddy -s /usr/sbin/nologin \
+                      -c "Caddy L4 service account" caddy
+          fi
+          chown -R caddy:caddy /var/lib/caddy /var/log/caddy
+          if [ "$1" = "configure" ]; then
+              systemctl daemon-reload
+              systemctl enable caddy-l4.service || true
+          fi
+          POSTINST
+          chmod 0755 "${STAGE}/DEBIAN/postinst"
+
+          # DEBIAN/prerm
+          cat > "${STAGE}/DEBIAN/prerm" <<'PRERM'
+          #!/bin/sh
+          set -e
+          if [ "$1" = "remove" ] && command -v systemctl >/dev/null; then
+              systemctl disable --now caddy-l4.service || true
+          fi
+          PRERM
+          chmod 0755 "${STAGE}/DEBIAN/prerm"
+
+          fakeroot dpkg-deb --build "${STAGE}" "/tmp/debs/${PKG}.deb"
+          ls -lh /tmp/debs/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb-debian-${{ matrix.codename }}
+          path: /tmp/debs/*.deb
+
+  # ── Package: FreeBSD ───────────────────────────────────────────────────────
+  #
+  # Each FreeBSD job builds the caddy binary directly inside the VM
+  # (avoids cross-compilation issues with CGO/quic-go) and then creates
+  # a native .pkg archive using `pkg create`.
+  #
+  package-freebsd:
+    name: PKG (FreeBSD ${{ matrix.fbsd_release }})
+    runs-on: ubuntu-latest
+    needs: version
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - fbsd_release: '14.2'
+            fbsd_major: '14'
+          - fbsd_release: '15.0'
+            fbsd_major: '15'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build and package inside FreeBSD ${{ matrix.fbsd_release }}
+        uses: vmactions/freebsd-vm@v1
+        with:
+          release: ${{ matrix.fbsd_release }}
+          usesh: true
+          prepare: |
+            pkg install -y git curl
+
+          run: |
+            set -e
+
+            VERSION="${{ needs.version.outputs.version }}"
+            PLUGIN_REF="${{ needs.version.outputs.plugin_ref }}"
+
+            # ── Install Go ───────────────────────────────────────────────
+            GO_VER="${{ env.GO_DL_VERSION }}"
+            fetch -q "https://go.dev/dl/go${GO_VER}.freebsd-amd64.tar.gz" \
+                  -o /tmp/go.tar.gz
+            tar -C /usr/local -xzf /tmp/go.tar.gz
+            export PATH=/usr/local/go/bin:$HOME/go/bin:$PATH
+            go version
+
+            # ── Install xcaddy ───────────────────────────────────────────
+            GOTOOLCHAIN=auto go install \
+                github.com/caddyserver/xcaddy/cmd/xcaddy@${{ env.XCADDY_VERSION }}
+
+            # ── Build caddy with l4 plugin ───────────────────────────────
+            GOTOOLCHAIN=auto CGO_ENABLED=0 \
+                xcaddy build --with "${PLUGIN_REF}" --output /tmp/caddy
+            chmod 0755 /tmp/caddy
+            /tmp/caddy version
+
+            # ── Stage package tree ───────────────────────────────────────
+            STAGE="/tmp/pkg-stage"
+            install -d "${STAGE}/usr/local/bin"
+            install -d "${STAGE}/usr/local/etc/caddy"
+            install -d "${STAGE}/usr/local/etc/rc.d"
+            install -d "${STAGE}/usr/local/share/doc/caddy-l4"
+            install -d "${STAGE}/var/log/caddy_l4"
+
+            install -m 0755 /tmp/caddy \
+                "${STAGE}/usr/local/bin/caddy"
+            install -m 0755 packaging/freebsd/rc.d/caddy_l4 \
+                "${STAGE}/usr/local/etc/rc.d/caddy_l4"
+            install -m 0644 Caddyfile.example \
+                "${STAGE}/usr/local/etc/caddy/Caddyfile.example"
+            install -m 0644 LICENSE \
+                "${STAGE}/usr/local/share/doc/caddy-l4/LICENSE"
+            install -m 0644 README.md \
+                "${STAGE}/usr/local/share/doc/caddy-l4/README.md"
+
+            # ── pkg manifest ─────────────────────────────────────────────
+            PKGDIR="/tmp/pkg-manifest"
+            mkdir -p "${PKGDIR}"
+
+            cat > "${PKGDIR}/+MANIFEST" <<MANIFEST
+            name: caddy-l4
+            version: "${VERSION}"
+            origin: net/caddy-l4
+            comment: "Layer 4 (TCP/UDP) routing app for Caddy"
+            desc: <<EOD
+            caddy-l4 provides Layer 4 routing for Caddy: TLS passthrough
+            with SNI-based routing, protocol detection, PROXY protocol,
+            UDP proxying, and load balancing across multiple backends.
+            EOD
+            maintainer: "yukh975@gmail.com"
+            www: "https://github.com/mholt/caddy-l4"
+            arch: "freebsd:${{ matrix.fbsd_major }}:amd64"
+            prefix: /usr/local
+            licenselogic: single
+            licenses: [Apache2]
+            categories: [net]
+            options: {}
+            MANIFEST
+
+            # Build plist from staged files
+            (cd "${STAGE}" && find . -type f | sed 's|^\./||' | sort) \
+                > "${PKGDIR}/plist"
+
+            mkdir -p /tmp/pkgs
+            pkg create \
+                --manifest "${PKGDIR}/+MANIFEST" \
+                --plist    "${PKGDIR}/plist" \
+                --rootdir  "${STAGE}" \
+                --out-dir  /tmp/pkgs
+
+            ls -lh /tmp/pkgs/
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pkg-freebsd-${{ matrix.fbsd_major }}
+          path: /tmp/pkgs/*.pkg
+
+  # ── Create GitHub Release ─────────────────────────────────────────────────
+  release:
+    name: GitHub Release
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - version
+      - package-altlinux
+      - package-debian
+      - package-freebsd
+
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          pattern: '{rpm-*,deb-*,pkg-*}'
+          merge-multiple: false
+
+      - name: List packages
+        run: find artifacts -type f | sort
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "${{ github.ref_name }}"
+          generate_release_notes: true
+          files: |
+            artifacts/**/*.rpm
+            artifacts/**/*.deb
+            artifacts/**/*.pkg

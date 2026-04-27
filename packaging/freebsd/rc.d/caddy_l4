@@ -1,0 +1,94 @@
+#!/bin/sh
+#
+# PROVIDE: caddy_l4
+# REQUIRE: LOGIN DAEMON NETWORKING
+# KEYWORD: shutdown
+#
+# Add the following lines to /etc/rc.conf to enable caddy_l4:
+#
+#   caddy_l4_enable="YES"
+#   caddy_l4_config="/usr/local/etc/caddy/Caddyfile"   # optional
+#   caddy_l4_user="www"                                 # optional
+#   caddy_l4_group="www"                                # optional
+#   caddy_l4_logfile="/var/log/caddy_l4.log"            # optional
+#   caddy_l4_env=""                                     # optional env vars
+#
+
+. /etc/rc.subr
+
+name="caddy_l4"
+rcvar="caddy_l4_enable"
+desc="Caddy L4 — Layer 4 (TCP/UDP) proxy"
+
+load_rc_config "${name}"
+
+: "${caddy_l4_enable:=NO}"
+: "${caddy_l4_config:=/usr/local/etc/caddy/Caddyfile}"
+: "${caddy_l4_user:=www}"
+: "${caddy_l4_group:=www}"
+: "${caddy_l4_pidfile:=/var/run/${name}.pid}"
+: "${caddy_l4_logfile:=/var/log/${name}.log}"
+: "${caddy_l4_env:=}"
+
+command="/usr/local/bin/caddy"
+command_args="run --config ${caddy_l4_config}"
+pidfile="${caddy_l4_pidfile}"
+
+start_precmd="${name}_prestart"
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+reload_cmd="${name}_reload"
+status_cmd="${name}_status"
+
+extra_commands="reload"
+
+caddy_l4_prestart()
+{
+    install -d -o "${caddy_l4_user}" -g "${caddy_l4_group}" \
+        -m 0750 /usr/local/etc/caddy
+    install -d -o "${caddy_l4_user}" -g "${caddy_l4_group}" \
+        -m 0750 /var/run
+}
+
+caddy_l4_start()
+{
+    echo "Starting ${desc}."
+    /usr/sbin/daemon \
+        -u "${caddy_l4_user}" \
+        -p "${pidfile}" \
+        -o "${caddy_l4_logfile}" \
+        /usr/bin/env ${caddy_l4_env} ${command} ${command_args}
+}
+
+caddy_l4_stop()
+{
+    if [ ! -f "${pidfile}" ]; then
+        echo "${name} is not running."
+        return 0
+    fi
+    echo "Stopping ${desc}."
+    kill -TERM "$(cat "${pidfile}")"
+    rm -f "${pidfile}"
+}
+
+caddy_l4_reload()
+{
+    if [ ! -f "${pidfile}" ]; then
+        echo "${name} is not running."
+        return 1
+    fi
+    echo "Reloading ${desc} configuration."
+    ${command} reload --config "${caddy_l4_config}"
+}
+
+caddy_l4_status()
+{
+    if [ -f "${pidfile}" ] && kill -0 "$(cat "${pidfile}")" 2>/dev/null; then
+        echo "${name} is running as pid $(cat "${pidfile}")."
+    else
+        echo "${name} is not running."
+        return 1
+    fi
+}
+
+run_rc_command "$1"
