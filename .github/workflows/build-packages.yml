@@ -134,19 +134,21 @@ jobs:
     name: RPM (${{ matrix.branch }})
     runs-on: ubuntu-latest
     needs: [version, build-linux]
+    # NOTE: No public Docker image for ALT Linux p11/Sisyphus could be found.
+    # RPMs are built on Fedora (fully compatible RPM toolchain).
+    # For production ALT Linux packages rebuild with packaging/altlinux/caddy-l4.spec
+    # on an actual ALT Linux p11 or Sisyphus system.
     strategy:
       fail-fast: false
       matrix:
         include:
           - branch: p11
-            image: ghcr.io/alt-linux/alt:p11
             release: alt1
           - branch: sisyphus
-            image: ghcr.io/alt-linux/alt:sisyphus
             release: alt1
 
     container:
-      image: ${{ matrix.image }}
+      image: fedora:latest
 
     steps:
       - uses: actions/checkout@v4
@@ -158,7 +160,7 @@ jobs:
           path: /tmp/bin
 
       - name: Install build tools
-        run: apt-get update -qq && apt-get install -y rpm-build rpm-build-systemd shadow-utils
+        run: dnf install -y rpm-build systemd-rpm-macros shadow-utils
 
       - name: Build RPM
         env:
@@ -307,9 +309,11 @@ jobs:
             sed -e "s/@@VERSION@@/${VERSION}/g" \
                 -e "s/@@FBSD_MAJOR@@/${FBSD_MAJOR}/g" \
                 "${WS}/packaging/freebsd/+MANIFEST.template" > "${METADIR}/+MANIFEST"
-            (cd "${STAGE}/usr/local" && find . -type f | sed 's|^\./||' | sort) > "${METADIR}/plist"
+            # pkg create: rootdir is the fake system root; plist paths are
+            # relative to rootdir (i.e. include usr/local/... prefix).
+            # Do NOT pass -p plist — let pkg auto-discover all files from rootdir.
             mkdir -p /tmp/pkgs
-            pkg create -m "${METADIR}" -r "${STAGE}/usr/local" -p "${METADIR}/plist" -o /tmp/pkgs
+            pkg create -m "${METADIR}" -r "${STAGE}" -o /tmp/pkgs
             ls -lh /tmp/pkgs/
 
       - uses: actions/upload-artifact@v4
