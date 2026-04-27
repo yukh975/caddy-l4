@@ -13,6 +13,8 @@ Url:     https://github.com/mholt/caddy-l4
 Source0: caddy
 Source1: caddy-l4.service
 Source2: Caddyfile.example
+Source3: LICENSE
+Source4: README.md
 
 ExclusiveArch: x86_64 aarch64
 
@@ -45,6 +47,8 @@ Key features:
 install -D -m 0755 %{SOURCE0} %{buildroot}/usr/bin/caddy
 install -D -m 0644 %{SOURCE1} %{buildroot}/usr/lib/systemd/system/caddy-l4.service
 install -D -m 0644 %{SOURCE2} %{buildroot}/etc/caddy/Caddyfile.example
+install -D -m 0644 %{SOURCE3} %{buildroot}/usr/share/licenses/caddy-l4/LICENSE
+install -D -m 0644 %{SOURCE4} %{buildroot}/usr/share/doc/caddy-l4/README.md
 
 install -d %{buildroot}/var/lib/caddy
 install -d %{buildroot}/var/log/caddy
@@ -65,8 +69,8 @@ getent passwd caddy &>/dev/null || \
 %systemd_postun_with_restart caddy-l4.service
 
 %files
-%doc README.md
-%license LICENSE
+/usr/share/licenses/caddy-l4/LICENSE
+/usr/share/doc/caddy-l4/README.md
 /usr/bin/caddy
 /usr/lib/systemd/system/caddy-l4.service
 %dir /etc/caddy
