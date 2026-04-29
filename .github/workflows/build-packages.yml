@@ -193,6 +193,7 @@ jobs:
         with:
           name: rpm-altlinux-${{ matrix.branch }}
           path: /tmp/artifacts/*.rpm
+          retention-days: 1
 
   # ── Package: Debian ──────────────────────────────────────────────────────
   package-debian:
@@ -256,6 +257,7 @@ jobs:
         with:
           name: deb-debian-${{ matrix.codename }}
           path: /tmp/debs/*.deb
+          retention-days: 1
 
   # ── Package: FreeBSD ─────────────────────────────────────────────────────
   package-freebsd:
@@ -326,6 +328,7 @@ jobs:
         with:
           name: pkg-freebsd-${{ matrix.fbsd_major }}
           path: ${{ github.workspace }}/pkgs/*.pkg
+          retention-days: 1
 
   # ── Create GitHub Release ────────────────────────────────────────────────
   release:
